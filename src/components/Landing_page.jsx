@@ -67,14 +67,13 @@
 // };
 
 // export default LandingPage;
-
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { auth } from "../firebase-config-database";
 import bg from "../bg.jpg";
 
 const LandingPage = () => {
-  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(null); // Initially, set to null to indicate loading state
+  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -103,14 +102,22 @@ const LandingPage = () => {
     navigate("/battery");
   };
 
+  const handleLogout = async () => {
+    try {
+      await auth.signOut();
+      navigate("/");
+    } catch (error) {
+      console.error("Error logging out:", error);
+    }
+  };
+
   if (isAdminLoggedIn === null) {
-    // If authentication status is not yet determined, render a loading state
     return <p>Loading...</p>;
   }
 
   return (
     <div
-      className="flex justify-center items-center h-screen"
+      className="flex flex-col justify-center items-center h-screen"
       style={{ backgroundImage: `url(${bg})`, backgroundSize: "cover" }}
     >
       <div className="flex">
@@ -139,6 +146,14 @@ const LandingPage = () => {
           </div>
         </div>
       </div>
+
+      {/* Logout Button */}
+      <button
+        onClick={handleLogout}
+        className="mt-6 bg-red-500 text-white px-6 py-2 rounded-lg hover:bg-red-600 transition"
+      >
+        Logout
+      </button>
     </div>
   );
 };
