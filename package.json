@@ -24,6 +24,9 @@
     "rehype-highlight": "^7.0.2",
     "remark-gfm": "^4.0.1",
     "twilio": "^5.5.0",
+    "undici": ">=5.28.5",
+    "postcss": ">=8.4.31",
+      "ws": ">=8.17.1",
     "web-vitals": "^2.1.4"
   },
   "scripts": {
