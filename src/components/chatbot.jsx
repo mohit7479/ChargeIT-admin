@@ -800,131 +800,334 @@ function Chatbot() {
     setMessages((prev) => [...prev, { text: message, sender: "user" }]);
     setInput("");
 
+    const lowerMessage = message.toLowerCase();
+
+    // ✅ Exit Flow
+    if (
+      lowerMessage.includes("exit") ||
+      lowerMessage.includes("stop") ||
+      lowerMessage.includes("cancel") ||
+      lowerMessage.includes("another function") ||
+      lowerMessage.includes("switch function") ||
+      lowerMessage.includes("different task")
+    ) {
+      stopAllProcesses();
+      return;
+    }
+
+    // ✅ Handle Active Processes
     if (isBookingSlot) {
       await handleBookingProcess(message);
       return;
     }
-
     if (isSearchingBookings) {
       await handleSearchProcess(message);
       return;
     }
-
     if (isCheckingTimeSlot) {
       await handleTimeSlotCheck(message);
       return;
     }
-
     if (isCheckingStationBookings) {
       await handleStationBookingsCheck(message);
       return;
     }
 
-    const lowerMessage = message.toLowerCase();
-    if (lowerMessage === "book slot") {
-      setIsBookingSlot(true);
-      setBookingStep(0);
-      setMessages((prev) => [
-        ...prev,
-        {
-          text: `📍 Please select a location:\n${locations
-            .map((loc) => `• ${loc}`)
-            .join("\n")}`,
-          sender: "bot",
-        },
-      ]);
+    // ✅ Keyword-based Matching (Basic Fallback)
+    if (lowerMessage.includes("book") && lowerMessage.includes("slot")) {
+      startBookingProcess();
       return;
     }
-
-    if (lowerMessage === "view bookings") {
+    if (lowerMessage.includes("view") && lowerMessage.includes("booking")) {
       await handleViewBookings();
       return;
     }
-
-    if (lowerMessage === "search bookings") {
-      setIsSearchingBookings(true);
-      setSearchStep(0);
-      setMessages((prev) => [
-        ...prev,
-        {
-          text: `📍 Please enter the charging station name to search for:\n${locations
-            .map((loc) => `• ${loc}`)
-            .join("\n")}`,
-          sender: "bot",
-        },
-      ]);
+    if (lowerMessage.includes("search") && lowerMessage.includes("booking")) {
+      startSearchProcess();
+      return;
+    }
+    if (lowerMessage.includes("check") && lowerMessage.includes("time slot")) {
+      startTimeSlotCheck();
+      return;
+    }
+    if (
+      lowerMessage.includes("station") &&
+      lowerMessage.includes("bookings") &&
+      lowerMessage.includes("count")
+    ) {
+      startStationBookingCheck();
       return;
     }
 
-    if (lowerMessage === "check time slot") {
-      setIsCheckingTimeSlot(true);
-      setCheckTimeStep(0);
-      setMessages((prev) => [
-        ...prev,
-        {
-          text: `📍 Please enter the charging station name to check:\n${locations
-            .map((loc) => `• ${loc}`)
-            .join("\n")}`,
-          sender: "bot",
-        },
-      ]);
-      return;
-    }
-
-    if (lowerMessage === "station bookings count") {
-      setIsCheckingStationBookings(true);
-      setStationBookingStep(0);
-      setMessages((prev) => [
-        ...prev,
-        {
-          text: `📍 Please enter the charging station name to check booking count:\n${locations
-            .map((loc) => `• ${loc}`)
-            .join("\n")}`,
-          sender: "bot",
-        },
-      ]);
-      return;
-    }
-
-    if (lowerMessage === "book slot") {
-      setIsBookingSlot(true);
-      setBookingStep(0);
-      setMessages((prev) => [
-        ...prev,
-        {
-          text: `📍 Please select a location:\n${locations
-            .map((loc) => `• ${loc}`)
-            .join("\n")}`,
-          sender: "bot",
-        },
-      ]);
-      return;
-    }
-
+    // ✅ Google Gemini AI for Intent Detection
     try {
       const response = await axios.post(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${process.env.REACT_APP_API_KEY}`,
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=AIzaSyBk71wWB363tGfFfscSXr-nZoX-lJCZbBE",
         {
-          contents: [{ parts: [{ text: message }] }],
+          contents: [
+            {
+              parts: [
+                {
+                  text: `Classify the intent of the following message into one of these categories: 
+                1. Book Slot 
+                2. View Bookings 
+                3. Search Bookings 
+                4. Check Time Slot 
+                5. Check Station Booking Count 
+                6. General Conversation
+                
+                User message: "${message}"`,
+                },
+              ],
+            },
+          ],
         }
       );
 
       const botResponse =
-        response.data.candidates?.[0]?.content?.parts?.[0]?.text ||
-        "I couldn't process that request. You can try:\n• Type 'book slot' to make a booking\n• Type 'view bookings' to see your current bookings\n• Type 'search bookings' to find bookings by station and email\n• Type 'check time slot' to see bookings in a specific time slot";
+        response.data.candidates?.[0]?.content?.parts?.[0]?.text || "unknown";
 
-      setMessages((prev) => [...prev, { text: botResponse, sender: "bot" }]);
+      // ✅ Process Gemini's Response
+      if (botResponse.toLowerCase().includes("book slot")) {
+        startBookingProcess();
+        return;
+      } else if (botResponse.toLowerCase().includes("view bookings")) {
+        await handleViewBookings();
+        return;
+      } else if (botResponse.toLowerCase().includes("search bookings")) {
+        startSearchProcess();
+        return;
+      } else if (botResponse.toLowerCase().includes("check time slot")) {
+        startTimeSlotCheck();
+        return;
+      } else if (
+        botResponse.toLowerCase().includes("check station booking count")
+      ) {
+        startStationBookingCheck();
+        return;
+      }
+
+      // Default response if no intent is detected
+      setMessages((prev) => [
+        ...prev,
+        {
+          text: "I'm not sure what you mean. You can try:\n• 'Book slot' to make a booking\n• 'View bookings' to see your bookings\n• 'Search bookings' to find bookings\n• 'Check time slot' for availability",
+          sender: "bot",
+        },
+      ]);
     } catch (error) {
       console.error("Error:", error);
       setMessages((prev) => [
         ...prev,
         {
-          text: "Sorry, I encountered an error. You can:\n• Type 'book slot' to make a booking\n• Type 'view bookings' to see your bookings\n• Type 'search bookings' to find bookings by station and email\n• Type 'check time slot' to see bookings in a specific time slot",
+          text: "⚠️ Sorry, I encountered an error. Try again later!",
           sender: "bot",
         },
       ]);
     }
   };
+
+  // ✅ Stop All Processes
+  const stopAllProcesses = () => {
+    setIsBookingSlot(false);
+    setIsSearchingBookings(false);
+    setIsCheckingTimeSlot(false);
+    setIsCheckingStationBookings(false);
+
+    setMessages((prev) => [
+      ...prev,
+      { text: "✅ Booking process has been stopped.", sender: "bot" },
+    ]);
+  };
+
+  // ✅ Helper Functions
+  const startBookingProcess = () => {
+    setIsBookingSlot(true);
+    setBookingStep(0);
+    setMessages((prev) => [
+      ...prev,
+      {
+        text: `📍 Please select a location:\n${locations
+          .map((loc) => `• ${loc}`)
+          .join("\n")}`,
+        sender: "bot",
+      },
+    ]);
+  };
+
+  const startSearchProcess = () => {
+    setIsSearchingBookings(true);
+    setSearchStep(0);
+    setMessages((prev) => [
+      ...prev,
+      {
+        text: `📍 Enter the charging station name to search:\n${locations
+          .map((loc) => `• ${loc}`)
+          .join("\n")}`,
+        sender: "bot",
+      },
+    ]);
+  };
+
+  const startTimeSlotCheck = () => {
+    setIsCheckingTimeSlot(true);
+    setCheckTimeStep(0);
+    setMessages((prev) => [
+      ...prev,
+      {
+        text: `📍 Enter the charging station name to check availability:\n${locations
+          .map((loc) => `• ${loc}`)
+          .join("\n")}`,
+        sender: "bot",
+      },
+    ]);
+  };
+
+  const startStationBookingCheck = () => {
+    setIsCheckingStationBookings(true);
+    setStationBookingStep(0);
+    setMessages((prev) => [
+      ...prev,
+      {
+        text: `📍 Enter the charging station name to check booking count:\n${locations
+          .map((loc) => `• ${loc}`)
+          .join("\n")}`,
+        sender: "bot",
+      },
+    ]);
+  };
+
+  // const sendMessage = async (message) => {
+  //   if (!message.trim()) return;
+
+  //   setMessages((prev) => [...prev, { text: message, sender: "user" }]);
+  //   setInput("");
+
+  //   if (isBookingSlot) {
+  //     await handleBookingProcess(message);
+  //     return;
+  //   }
+
+  //   if (isSearchingBookings) {
+  //     await handleSearchProcess(message);
+  //     return;
+  //   }
+
+  //   if (isCheckingTimeSlot) {
+  //     await handleTimeSlotCheck(message);
+  //     return;
+  //   }
+
+  //   if (isCheckingStationBookings) {
+  //     await handleStationBookingsCheck(message);
+  //     return;
+  //   }
+
+  //   const lowerMessage = message.toLowerCase();
+  //   if (lowerMessage === "book slot") {
+  //     setIsBookingSlot(true);
+  //     setBookingStep(0);
+  //     setMessages((prev) => [
+  //       ...prev,
+  //       {
+  //         text: `📍 Please select a location:\n${locations
+  //           .map((loc) => `• ${loc}`)
+  //           .join("\n")}`,
+  //         sender: "bot",
+  //       },
+  //     ]);
+  //     return;
+  //   }
+
+  //   if (lowerMessage === "view bookings") {
+  //     await handleViewBookings();
+  //     return;
+  //   }
+
+  //   if (lowerMessage === "search bookings") {
+  //     setIsSearchingBookings(true);
+  //     setSearchStep(0);
+  //     setMessages((prev) => [
+  //       ...prev,
+  //       {
+  //         text: `📍 Please enter the charging station name to search for:\n${locations
+  //           .map((loc) => `• ${loc}`)
+  //           .join("\n")}`,
+  //         sender: "bot",
+  //       },
+  //     ]);
+  //     return;
+  //   }
+
+  //   if (lowerMessage === "check time slot") {
+  //     setIsCheckingTimeSlot(true);
+  //     setCheckTimeStep(0);
+  //     setMessages((prev) => [
+  //       ...prev,
+  //       {
+  //         text: `📍 Please enter the charging station name to check:\n${locations
+  //           .map((loc) => `• ${loc}`)
+  //           .join("\n")}`,
+  //         sender: "bot",
+  //       },
+  //     ]);
+  //     return;
+  //   }
+
+  //   if (lowerMessage === "station bookings count") {
+  //     setIsCheckingStationBookings(true);
+  //     setStationBookingStep(0);
+  //     setMessages((prev) => [
+  //       ...prev,
+  //       {
+  //         text: `📍 Please enter the charging station name to check booking count:\n${locations
+  //           .map((loc) => `• ${loc}`)
+  //           .join("\n")}`,
+  //         sender: "bot",
+  //       },
+  //     ]);
+  //     return;
+  //   }
+
+  //   if (lowerMessage === "book slot") {
+  //     setIsBookingSlot(true);
+  //     setBookingStep(0);
+  //     setMessages((prev) => [
+  //       ...prev,
+  //       {
+  //         text: `📍 Please select a location:\n${locations
+  //           .map((loc) => `• ${loc}`)
+  //           .join("\n")}`,
+  //         sender: "bot",
+  //       },
+  //     ]);
+  //     return;
+  //   }
+
+  //   try {
+  //     const response = await axios.post(
+  //       `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${process.env.REACT_APP_API_KEY}`,
+  //       {
+  //         contents: [{ parts: [{ text: message }] }],
+  //       }
+  //     );
+
+  //     const botResponse =
+  //       response.data.candidates?.[0]?.content?.parts?.[0]?.text ||
+  //       "I couldn't process that request. You can try:\n• Type 'book slot' to make a booking\n• Type 'view bookings' to see your current bookings\n• Type 'search bookings' to find bookings by station and email\n• Type 'check time slot' to see bookings in a specific time slot";
+
+  //     setMessages((prev) => [...prev, { text: botResponse, sender: "bot" }]);
+  //   } catch (error) {
+  //     console.error("Error:", error);
+  //     setMessages((prev) => [
+  //       ...prev,
+  //       {
+  //         text: "Sorry, I encountered an error. You can:\n• Type 'book slot' to make a booking\n• Type 'view bookings' to see your bookings\n• Type 'search bookings' to find bookings by station and email\n• Type 'check time slot' to see bookings in a specific time slot",
+  //         sender: "bot",
+  //       },
+  //     ]);
+  //   }
+  // };
 
   return (
     <div className="flex flex-col items-center h-screen bg-gradient-to-br from-green-100 via-green-200 to-green-300">

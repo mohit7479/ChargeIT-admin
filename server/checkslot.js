@@ -95,13 +95,13 @@ const transporter = nodemailer.createTransport({
     service: "gmail",
     auth: {
         user: process.env.GMAIL_USER,
-        pass: process.env.GMAIL_PASS, // Replace with OAuth2 if needed
+        pass: process.env.GMAIL_PASS,
     },
 });
 
 const twilioClient = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH_TOKEN);
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
-const USER_PHONE_NUMBER = "+919471945132"; // Fixed phone number
+const USER_PHONE_NUMBER = "+919471945132";
 
 // Listen for new pending email notifications
 

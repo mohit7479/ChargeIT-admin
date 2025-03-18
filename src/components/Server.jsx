@@ -16,6 +16,8 @@ function Server() {
   const [bookings, setBookings] = useState([]);
   const [queuedUsers, setQueuedUsers] = useState([]);
   const [timeSlots, setTimeSlots] = useState({});
+  const [selectedLocation, setSelectedLocation] = useState(null);
+  const [locations, setLocations] = useState([]);
 
   useEffect(() => {
     initializeTimeSlots();
@@ -31,11 +33,16 @@ function Server() {
     try {
       const snapshot = await get(slotsRef);
       if (snapshot.exists()) {
-        setTimeSlots(snapshot.val());
+        const timeSlotsData = snapshot.val();
+        setTimeSlots(timeSlotsData);
+
+        // Extract available locations
+        const availableLocations = Object.keys(timeSlotsData);
+        setLocations(availableLocations);
       } else {
         const defaultTimeSlots = {};
-        // Updated with more relevant locations based on the database screenshot
-        const locations = ["EDAPALLY", "Location B"];
+        // Updated with more relevant locations
+        const locations = ["EDAPALLY", "FORT KOCHI", "KAKKANAD", "VYTILLA"];
         const vehicleTypes = ["two-wheeler", "four-wheeler"];
         const chargingTypes = ["AC", "DC"];
         const hours = Array.from(
@@ -60,6 +67,7 @@ function Server() {
 
         await set(slotsRef, defaultTimeSlots);
         setTimeSlots(defaultTimeSlots);
+        setLocations(locations);
       }
     } catch (error) {
       console.error("Error initializing time slots:", error);
@@ -300,7 +308,6 @@ function Server() {
     }
   };
 
-  // Improved email notification function
   const sendEmailNotification = async (email, message, bookingDetails) => {
     const db = getDatabase();
     const emailNotificationsRef = ref(db, "emailNotifications");
@@ -328,7 +335,6 @@ function Server() {
     }
   };
 
-  // Improved SMS notification function
   const sendSMSNotification = async (phoneNumber, message) => {
     const db = getDatabase();
     const smsNotificationsRef = ref(db, "smsNotifications");
@@ -399,16 +405,9 @@ function Server() {
     return "Unknown";
   };
 
-  const getDateFromBookingTime = (bookingTime) => {
-    if (!bookingTime) return "Not specified";
-    const parts = bookingTime.split("-");
-    return parts[1]; // Returns the date part (DD/MM/YYYY)
-  };
-
   const getHourFromBookingTime = (bookingTime) => {
     if (!bookingTime) return "Not specified";
-    //const parts = bookingTime.split("-");
-    return bookingTime; // Returns the hour part (HH:00)
+    return bookingTime;
   };
 
   const getAvailabilityStatus = (location, vehicleType, chargingType, hour) => {
@@ -421,6 +420,17 @@ function Server() {
     }
   };
 
+  const handleLocationSelect = (location) => {
+    setSelectedLocation(location === selectedLocation ? null : location);
+  };
+
+  // Filter bookings based on selected location
+  const filteredBookings = selectedLocation
+    ? bookings.filter(
+        (booking) => booking.selectedLocation === selectedLocation
+      )
+    : bookings;
+
   return (
     <div
       className="relative flex items-center justify-center min-h-screen bg-cover"
@@ -428,126 +438,140 @@ function Server() {
     >
       <div className="mx-auto max-w-4xl py-4 px-8 bg-white shadow-lg rounded-lg relative z-10">
         <div className="text-center mb-6">
-          <p className="text-lg font-semibold">Our Bookings</p>
+          <p className="text-lg font-semibold">EV Charging Stations</p>
           <p className="text-sm text-gray-600">
             Users in queue: {queuedUsers.length}
           </p>
         </div>
 
-        {/* Today's availability for quick reference */}
-        <div className="mb-6 p-4 bg-gray-50 rounded">
-          <h3 className="text-md font-medium mb-2">Today's Availability:</h3>
-          <div className="grid grid-cols-2 gap-4">
-            {Object.keys(timeSlots).length > 0 ? (
-              Object.keys(timeSlots)
-                .slice(0, 2)
-                .map((location) => (
-                  <div key={location} className="p-2 border rounded">
-                    <p className="font-medium">{location}</p>
-                    <div className="text-sm">
-                      {Object.keys(timeSlots[location] || {}).map(
-                        (vehicleType) => (
-                          <div key={vehicleType} className="ml-2 mt-1">
-                            <p className="font-medium">{vehicleType}:</p>
-                            {Object.keys(
-                              timeSlots[location][vehicleType] || {}
-                            ).map((chargingType) => (
-                              <div key={chargingType} className="ml-2">
-                                <p>{chargingType} charging:</p>
-                                <div className="flex flex-wrap ml-2">
-                                  {Object.keys(
-                                    timeSlots[location][vehicleType][
-                                      chargingType
-                                    ] || {}
-                                  )
-                                    .slice(8, 20) // Just show business hours 8:00 to 19:00
-                                    .map((hour) => (
-                                      <span
-                                        key={hour}
-                                        className={`text-xs m-1 px-2 py-1 rounded ${
-                                          timeSlots[location][vehicleType][
-                                            chargingType
-                                          ][hour]
-                                            ? "bg-green-100 text-green-800"
-                                            : "bg-red-100 text-red-800"
-                                        }`}
-                                      >
-                                        {hour}
-                                      </span>
-                                    ))}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
+        {/* Location selector */}
+        <div className="mb-6">
+          <h3 className="text-md font-medium mb-2">Select Location:</h3>
+          <div className="flex flex-wrap gap-2">
+            {locations.map((location) => (
+              <button
+                key={location}
+                onClick={() => handleLocationSelect(location)}
+                className={`px-4 py-2 rounded-full text-sm font-medium ${
+                  selectedLocation === location
+                    ? "bg-blue-600 text-white"
+                    : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                }`}
+              >
+                {location}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Location-specific availability */}
+        {selectedLocation && (
+          <div className="mb-6 p-4 bg-gray-50 rounded">
+            <h3 className="text-md font-medium mb-2">
+              Available Slots at {selectedLocation}:
+            </h3>
+            {Object.keys(timeSlots[selectedLocation] || {}).map(
+              (vehicleType) => (
+                <div key={vehicleType} className="mb-4">
+                  <p className="font-medium text-sm">{vehicleType}:</p>
+                  {Object.keys(
+                    timeSlots[selectedLocation][vehicleType] || {}
+                  ).map((chargingType) => (
+                    <div key={chargingType} className="ml-4 mb-2">
+                      <p className="text-sm">{chargingType} charging:</p>
+                      <div className="flex flex-wrap ml-2">
+                        {Object.keys(
+                          timeSlots[selectedLocation][vehicleType][
+                            chargingType
+                          ] || {}
                         )
-                      )}
+                          .slice(8, 20) // Show business hours 8:00 to 19:00
+                          .map((hour) => (
+                            <span
+                              key={hour}
+                              className={`text-xs m-1 px-2 py-1 rounded ${
+                                timeSlots[selectedLocation][vehicleType][
+                                  chargingType
+                                ][hour]
+                                  ? "bg-green-100 text-green-800"
+                                  : "bg-red-100 text-red-800"
+                              }`}
+                            >
+                              {hour}
+                            </span>
+                          ))}
+                      </div>
                     </div>
+                  ))}
+                </div>
+              )
+            )}
+          </div>
+        )}
+
+        {/* Bookings */}
+        <div className="mb-6">
+          <h3 className="text-md font-medium mb-2">
+            {selectedLocation
+              ? `Bookings at ${selectedLocation}`
+              : "All Bookings"}
+            :
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {filteredBookings.length > 0 ? (
+              filteredBookings.map((booking) => (
+                <div key={booking.id} className="p-6 bg-gray-100 rounded-lg">
+                  <p className="text-xl font-bold mb-4">Booking Details:</p>
+                  <p className="text-lg">
+                    <strong>Name:</strong> {booking.name || "Not specified"}
+                  </p>
+                  <p className="text-lg">
+                    <strong>Vehicle ID:</strong>{" "}
+                    {booking.vehicleNumber || "Not specified"}
+                  </p>
+                  <p className="text-lg">
+                    <strong>Location:</strong>{" "}
+                    {booking.selectedLocation || "Not specified"}
+                  </p>
+                  <p className="text-lg">
+                    <strong>Time Slot:</strong>{" "}
+                    {getHourFromBookingTime(booking.bookingTime)}
+                  </p>
+                  <p className="text-lg">
+                    <strong>Vehicle Type:</strong>{" "}
+                    {booking.vehicleType || "Not specified"}
+                  </p>
+                  <p className="text-lg">
+                    <strong>Charging Type:</strong>{" "}
+                    {booking.chargingType || "Not specified"}
+                  </p>
+                  <p className="text-lg">Bill: {calculateBill(booking)}</p>
+                  <div className="flex justify-between items-center mt-4">
+                    <button
+                      onClick={() => handleCancelBooking(booking.id)}
+                      className="bg-red-500 text-white px-4 py-2 rounded-full hover:bg-red-600 focus:outline-none"
+                    >
+                      Cancel Booking
+                    </button>
+                    <button
+                      onClick={() => handlePaymentConfirmation(booking.id)}
+                      className="bg-green-500 text-white px-4 py-2 rounded-full hover:bg-green-600 focus:outline-none"
+                    >
+                      Bill Paid
+                    </button>
                   </div>
-                ))
+                </div>
+              ))
             ) : (
               <p className="col-span-2 text-center">
-                Loading availability data...
+                {selectedLocation
+                  ? `No bookings found for ${selectedLocation}.`
+                  : "No bookings found."}
               </p>
             )}
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
-          {bookings.length > 0 ? (
-            bookings.map((booking) => (
-              <div key={booking.id} className="p-6 bg-gray-100 rounded-lg">
-                <p className="text-xl font-bold mb-4">
-                  We have a booking with:
-                </p>
-                <p className="text-lg">
-                  <strong>Name:</strong> {booking.name || "Not specified"}
-                </p>
-                <p className="text-lg">
-                  <strong>Vehicle ID:</strong>{" "}
-                  {booking.vehicleNumber || "Not specified"}
-                </p>
-                <p className="text-lg">
-                  <strong>Location:</strong>{" "}
-                  {booking.selectedLocation || "Not specified"}
-                </p>{" "}
-                {/* <p className="text-lg">
-                  // <strong>Date:</strong> //{" "}
-                  {getDateFromBookingTime(booking.bookingTime)}
-                  //{" "}
-                </p> */}
-                <p className="text-lg">
-                  <strong>Time Slot:</strong>{" "}
-                  {getHourFromBookingTime(booking.bookingTime)}
-                </p>
-                <p className="text-lg">
-                  <strong>Vehicle Type:</strong>{" "}
-                  {booking.vehicleType || "Not specified"}
-                </p>
-                <p className="text-lg">
-                  <strong>Charging Type:</strong>{" "}
-                  {booking.chargingType || "Not specified"}
-                </p>
-                <p className="text-lg">Bill: {calculateBill(booking)}</p>
-                <div className="flex justify-between items-center mt-4">
-                  <button
-                    onClick={() => handleCancelBooking(booking.id)}
-                    className="bg-red-500 text-white px-4 py-2 rounded-full hover:bg-red-600 focus:outline-none"
-                  >
-                    Cancel Booking
-                  </button>
-                  <button
-                    onClick={() => handlePaymentConfirmation(booking.id)}
-                    className="bg-green-500 text-white px-4 py-2 rounded-full hover:bg-green-600 focus:outline-none"
-                  >
-                    Bill Paid
-                  </button>
-                </div>
-              </div>
-            ))
-          ) : (
-            <p className="col-span-2 text-center">No bookings found.</p>
-          )}
-        </div>
         <div className="text-center my-4">
           <p className="text-sm text-gray-600">
             Notifications are sent automatically via email and SMS when slots
