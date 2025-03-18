@@ -9,6 +9,10 @@ import {
   push,
   set,
 } from "firebase/database";
+import { QRCodeCanvas } from "qrcode.react";
+// or
+import { QRCodeSVG } from "qrcode.react";
+// You'll need to install this package
 import bgImage from "../bg.jpg";
 import app from "../firebase-config-database";
 
@@ -18,11 +22,13 @@ function Server() {
   const [timeSlots, setTimeSlots] = useState({});
   const [selectedLocation, setSelectedLocation] = useState(null);
   const [locations, setLocations] = useState([]);
+  const [paymentStatus, setPaymentStatus] = useState({});
 
   useEffect(() => {
     initializeTimeSlots();
     checkBookings();
     monitorQueue();
+    monitorPayments();
   }, []);
 
   // Initialize time slots
@@ -146,12 +152,119 @@ function Server() {
           id: key,
           ...data[key],
         }));
-        console.log(queueList);
         setQueuedUsers(queueList);
       } else {
         setQueuedUsers([]);
       }
     });
+  };
+
+  // Monitor payments in real-time
+  const monitorPayments = () => {
+    const db = getDatabase();
+    const paymentsRef = ref(db, "payments/");
+
+    onValue(paymentsRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        const statusObj = {};
+
+        Object.keys(data).forEach((key) => {
+          statusObj[data[key].bookingId] = data[key].status;
+
+          // If payment status is "completed", process the payment automatically
+          if (data[key].status === "completed" && !data[key].processed) {
+            processCompletedPayment(data[key].bookingId, key);
+          }
+        });
+
+        setPaymentStatus(statusObj);
+      }
+    });
+  };
+
+  // Process completed payments
+  const processCompletedPayment = async (bookingId, paymentId) => {
+    const db = getDatabase();
+    const bookingRef = ref(db, `bookings/${bookingId}`);
+    const paymentRef = ref(db, `payments/${paymentId}`);
+
+    try {
+      // Mark payment as processed
+      await update(paymentRef, { processed: true });
+
+      // Get the booking details before removing
+      const snapshot = await get(bookingRef);
+      if (snapshot.exists()) {
+        const fulfilledBooking = snapshot.val();
+
+        // Remove the booking
+        await remove(bookingRef);
+
+        // Update local state
+        setBookings((prevBookings) =>
+          prevBookings.filter((booking) => booking.id !== bookingId)
+        );
+
+        // Make the time slot available again
+        updateTimeSlotAvailability(fulfilledBooking, true);
+
+        // Notify users in queue about the available slot
+        notifyUsersInQueue(fulfilledBooking);
+
+        // Send completion notification to user
+        if (fulfilledBooking.userId) {
+          sendPaymentCompletionNotification(
+            fulfilledBooking.userId,
+            fulfilledBooking.email,
+            fulfilledBooking.phoneNumber,
+            bookingId
+          );
+        }
+
+        console.log("Payment processed automatically for booking:", bookingId);
+      }
+    } catch (error) {
+      console.error("Error processing payment:", error);
+    }
+  };
+
+  // Send payment completion notification
+  const sendPaymentCompletionNotification = async (
+    userId,
+    email,
+    phoneNumber,
+    bookingId
+  ) => {
+    const db = getDatabase();
+    const notificationRef = ref(db, `notifications/${userId}`);
+    const newNotification = {
+      message: `Your payment for booking #${bookingId} has been processed successfully. Your charging slot is confirmed.`,
+      timestamp: new Date().toISOString(),
+      read: false,
+    };
+
+    try {
+      // Add notification
+      const userNotificationsRef = push(notificationRef);
+      await set(userNotificationsRef, newNotification);
+
+      // Send email notification if email exists
+      if (email) {
+        await sendEmailNotification(
+          email,
+          "Payment Successful - EV Charging Slot Confirmed",
+          newNotification.message
+        );
+      }
+
+      // Send SMS notification if phone number exists
+      if (phoneNumber) {
+        await sendSMSNotification(phoneNumber, newNotification.message);
+      }
+    } catch (error) {
+      console.error("Error sending payment completion notification:", error);
+    }
   };
 
   const handleCancelBooking = async (bookingId) => {
@@ -162,6 +275,22 @@ function Server() {
       const snapshot = await get(bookingRef);
       if (snapshot.exists()) {
         const canceledBooking = snapshot.val();
+
+        // Check if there's a payment associated with this booking
+        const paymentsRef = ref(db, "payments/");
+        const paymentsSnapshot = await get(paymentsRef);
+
+        if (paymentsSnapshot.exists()) {
+          const payments = paymentsSnapshot.val();
+          const paymentId = Object.keys(payments).find(
+            (key) => payments[key].bookingId === bookingId
+          );
+
+          if (paymentId) {
+            // Delete the payment record
+            await remove(ref(db, `payments/${paymentId}`));
+          }
+        }
 
         await remove(bookingRef);
 
@@ -232,7 +361,7 @@ function Server() {
       return;
     }
 
-    // Extract start and end times from "1:00 - 2:00"
+    // Extract start and end times from booking time
     const [startTime, endTime] = bookingTime.split("-").map((t) => t.trim());
     const startHour = parseInt(startTime.split(":")[0]);
     const endHour = parseInt(endTime.split(":")[0]);
@@ -283,18 +412,20 @@ function Server() {
       try {
         const userNotificationsRef = push(notificationRef);
         await set(userNotificationsRef, newNotification);
-        console.log(`Notification sent to user ${firstEligibleUser.userId}`);
 
         if (firstEligibleUser.userEmail) {
           await sendEmailNotification(
             firstEligibleUser.userEmail,
-            newNotification.message,
-            newNotification.bookingDetails
+            "EV Charging Slot Available!",
+            newNotification.message
           );
         }
 
         if (firstEligibleUser.phoneNumber) {
-          await sendSMSNotification("+9471945132", newNotification.message);
+          await sendSMSNotification(
+            firstEligibleUser.phoneNumber,
+            newNotification.message
+          );
         }
 
         const userQueueRef = ref(db, `queue/${firstEligibleUser.id}`);
@@ -308,18 +439,15 @@ function Server() {
     }
   };
 
-  const sendEmailNotification = async (email, message, bookingDetails) => {
+  const sendEmailNotification = async (email, subject, message) => {
     const db = getDatabase();
     const emailNotificationsRef = ref(db, "emailNotifications");
 
     try {
-      // Create email notification record in the database
-      // This would typically trigger a cloud function to send the actual email
       const newEmailNotification = {
         to: email,
-        subject: "EV Charging Slot Available!",
+        subject: subject,
         message: message,
-        bookingDetails: bookingDetails,
         timestamp: new Date().toISOString(),
         status: "pending",
       };
@@ -340,8 +468,6 @@ function Server() {
     const smsNotificationsRef = ref(db, "smsNotifications");
 
     try {
-      // Create SMS notification record in the database
-      // This would typically trigger a cloud function to send the actual SMS
       const newSMSNotification = {
         to: phoneNumber,
         message: message,
@@ -360,20 +486,132 @@ function Server() {
     }
   };
 
-  const handlePaymentConfirmation = async (bookingId) => {
-    const confirmation = window.confirm(
-      "Confirm payment? This will remove the booking details."
-    );
+  // Generate payment QR code for a booking
+  const generatePaymentQR = async (booking) => {
+    const db = getDatabase();
+    const bookingId = booking.id;
+    const amount = calculateBillAmount(booking);
 
-    if (confirmation) {
-      const db = getDatabase();
+    // Create a payment record
+    const paymentRef = ref(db, "payments");
+    const newPayment = {
+      bookingId: bookingId,
+      amount: amount,
+      timestamp: new Date().toISOString(),
+      status: "pending",
+      processed: false,
+      userId: booking.userId || "unknown",
+    };
+
+    try {
+      const paymentRecordRef = await push(paymentRef, newPayment);
+      const paymentId = paymentRecordRef.key;
+
+      // Generate payment details for QR code
+      const paymentDetails = {
+        paymentId: paymentId,
+        bookingId: bookingId,
+        amount: amount,
+        description: `EV Charging at ${booking.selectedLocation} - ${booking.bookingTime}`,
+        merchant: "EV Charging Network",
+      };
+
+      // Update booking with payment information
       const bookingRef = ref(db, `bookings/${bookingId}`);
+      await update(bookingRef, { paymentId: paymentId });
 
-      try {
-        // Get the booking details before removing
-        const snapshot = await get(bookingRef);
-        if (snapshot.exists()) {
-          const fulfilledBooking = snapshot.val();
+      // Send QR code to user
+      if (booking.email) {
+        await sendPaymentQRToUser(booking.email, paymentDetails, booking);
+      }
+
+      // If user has a phone number, send SMS with payment link
+      if (booking.phoneNumber) {
+        const paymentLink = `https://evcharging.app/payment/${paymentId}`;
+        await sendSMSNotification(
+          booking.phoneNumber,
+          `Your EV charging payment (${amount}) is pending. Pay here: ${paymentLink}`
+        );
+      }
+
+      alert("Payment QR code has been sent to the user.");
+
+      return paymentDetails;
+    } catch (error) {
+      console.error("Error generating payment QR:", error);
+      throw error;
+    }
+  };
+
+  // Send payment QR code to user via email
+  const sendPaymentQRToUser = async (email, paymentDetails, booking) => {
+    const db = getDatabase();
+    const emailNotificationsRef = ref(db, "emailNotifications");
+
+    try {
+      // Create a QR code data URL
+      const qrCodeData = JSON.stringify(paymentDetails);
+      const paymentLink = `https://evcharging.app/payment/${paymentDetails.paymentId}`;
+
+      const emailContent = `
+        <h2>EV Charging Payment</h2>
+        <p>Your booking at ${booking.selectedLocation} for ${booking.bookingTime} requires payment.</p>
+        <p>Amount: ${paymentDetails.amount}</p>
+        <p>Booking ID: ${booking.id}</p>
+        <p>Please scan the QR code below to complete your payment or click the link: <a href="${paymentLink}">${paymentLink}</a></p>
+        <p>Note: Your booking will be automatically confirmed once payment is complete.</p>
+      `;
+
+      const newEmailNotification = {
+        to: email,
+        subject: "Payment Required for EV Charging Booking",
+        message: emailContent,
+        attachments: [
+          {
+            type: "qrCode",
+            data: qrCodeData,
+            name: "payment_qr.png",
+          },
+        ],
+        timestamp: new Date().toISOString(),
+        status: "pending",
+      };
+
+      const newRef = await push(emailNotificationsRef, newEmailNotification);
+      console.log(`Payment QR email queued for ${email}`);
+      return newRef.key;
+    } catch (error) {
+      console.error("Error sending payment QR to user:", error);
+      throw error;
+    }
+  };
+
+  const handlePaymentConfirmation = async (bookingId) => {
+    const db = getDatabase();
+    const bookingRef = ref(db, `bookings/${bookingId}`);
+
+    try {
+      const snapshot = await get(bookingRef);
+      if (snapshot.exists()) {
+        const booking = snapshot.val();
+        const paymentId = booking.paymentId;
+
+        // If booking already has a payment ID, update its status
+        if (paymentId) {
+          const paymentRef = ref(db, `payments/${paymentId}`);
+          await update(paymentRef, {
+            status: "completed",
+            completedAt: new Date().toISOString(),
+          });
+          alert(
+            "Payment marked as completed. Booking will be processed automatically."
+          );
+        } else {
+          // Manual payment confirmation without QR code
+          const fulfilledBooking = {
+            id: bookingId,
+            ...booking,
+          };
 
           // Remove the booking
           await remove(bookingRef);
@@ -390,34 +628,29 @@ function Server() {
 
           alert("Booking has been fulfilled.");
         }
-      } catch (error) {
-        console.error("Error confirming payment:", error);
       }
+    } catch (error) {
+      console.error("Error confirming payment:", error);
     }
   };
 
   const calculateBill = (booking) => {
+    const amount = calculateBillAmount(booking);
+    return `Rs ${amount}`;
+  };
+
+  const calculateBillAmount = (booking) => {
     if (booking.vehicleType === "two-wheeler") {
-      return "Rs 40";
+      return 40;
     } else if (booking.vehicleType === "four-wheeler") {
-      return booking.chargingType === "AC" ? "Rs 40" : "Rs 400";
+      return booking.chargingType === "AC" ? 40 : 400;
     }
-    return "Unknown";
+    return 0;
   };
 
   const getHourFromBookingTime = (bookingTime) => {
     if (!bookingTime) return "Not specified";
     return bookingTime;
-  };
-
-  const getAvailabilityStatus = (location, vehicleType, chargingType, hour) => {
-    try {
-      return timeSlots[location][vehicleType][chargingType][hour]
-        ? "Available"
-        : "Booked";
-    } catch (error) {
-      return "Unknown";
-    }
   };
 
   const handleLocationSelect = (location) => {
@@ -546,20 +779,64 @@ function Server() {
                     {booking.chargingType || "Not specified"}
                   </p>
                   <p className="text-lg">Bill: {calculateBill(booking)}</p>
-                  <div className="flex justify-between items-center mt-4">
+                  <p className="text-lg">
+                    <strong>Payment Status:</strong>{" "}
+                    <span
+                      className={`font-medium ${
+                        paymentStatus[booking.id] === "completed"
+                          ? "text-green-600"
+                          : paymentStatus[booking.id] === "pending"
+                          ? "text-yellow-600"
+                          : "text-gray-600"
+                      }`}
+                    >
+                      {paymentStatus[booking.id]
+                        ? paymentStatus[booking.id].charAt(0).toUpperCase() +
+                          paymentStatus[booking.id].slice(1)
+                        : "Not Started"}
+                    </span>
+                  </p>
+                  <div className="flex flex-wrap justify-between items-center mt-4 gap-2">
                     <button
                       onClick={() => handleCancelBooking(booking.id)}
                       className="bg-red-500 text-white px-4 py-2 rounded-full hover:bg-red-600 focus:outline-none"
                     >
                       Cancel Booking
                     </button>
+
+                    {!booking.paymentId && (
+                      <button
+                        onClick={() =>
+                          generatePaymentQR({ ...booking, id: booking.id })
+                        }
+                        className="bg-blue-500 text-white px-4 py-2 rounded-full hover:bg-blue-600 focus:outline-none"
+                      >
+                        Send Payment QR
+                      </button>
+                    )}
+
                     <button
                       onClick={() => handlePaymentConfirmation(booking.id)}
                       className="bg-green-500 text-white px-4 py-2 rounded-full hover:bg-green-600 focus:outline-none"
                     >
-                      Bill Paid
+                      Mark as Paid
                     </button>
                   </div>
+
+                  {booking.paymentId &&
+                    paymentStatus[booking.id] === "pending" && (
+                      <div className="mt-4 p-4 border rounded-lg bg-white">
+                        <p className="text-sm text-center mb-2">
+                          Payment QR (for testing)
+                        </p>
+                        <div className="flex justify-center">
+                          <QRCodeCanvas
+                            value={`https://evcharging.app/payment/${booking.paymentId}`}
+                            size={120}
+                          />
+                        </div>
+                      </div>
+                    )}
                 </div>
               ))
             ) : (

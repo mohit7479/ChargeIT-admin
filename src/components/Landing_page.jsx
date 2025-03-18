@@ -111,6 +111,10 @@ const LandingPage = () => {
     }
   };
 
+  const handleChat = () => {
+    navigate("/chatbot");
+  };
+
   if (isAdminLoggedIn === null) {
     return <p>Loading...</p>;
   }
@@ -146,7 +150,12 @@ const LandingPage = () => {
           </div>
         </div>
       </div>
-
+      <button
+        onClick={handleChat}
+        className="mt-6 bg-red-500 text-white px-6 py-2 rounded-lg hover:bg-red-600 transition"
+      >
+        Chatbot
+      </button>
       {/* Logout Button */}
       <button
         onClick={handleLogout}
