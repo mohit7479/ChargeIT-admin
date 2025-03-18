@@ -4,14 +4,14 @@ import { getAuth } from "firebase/auth";
 import { getDatabase } from "firebase/database";
 
 const firebaseConfig = {
-  apiKey: "0",
+  apiKey: process.env.REACT_APP_FIREBASES_API_KEY,
   authDomain: "chargingit-50971.firebaseapp.com",
   projectId: "chargingit-50971",
   storageBucket: "chargingit-50971.appspot.com",
   messagingSenderId: "625931027078",
   appId: "1:625931027078:web:a223e95a1aaa887ea58707",
   measurementId: "G-3HS707C9WV",
-  databaseURL: "" // ✅ Corrected
+  databaseURL: "https://chargingit-50971-default-rtdb.firebaseio.com/" // ✅ Corrected
 };
 
 
